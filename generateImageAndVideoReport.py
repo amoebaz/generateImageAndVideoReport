@@ -7,9 +7,11 @@
 import os
 import cv2
 import exiftool
+import argparse
 
 # Check config_file_example for more info
-from config_file import TMP_PATH, to_remove
+#from config_file import TMP_PATH, to_remove
+from config_file import *
 
 from docx import Document
 from docx.shared import Inches
@@ -23,6 +25,25 @@ from PIL import ExifTags
 
 from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import qn
+
+# Global options
+# -c || --count : only count total count of images and videos and show on screen.
+# -d filename || --docx : export to docx.
+# -h || --help : show help.
+# -i || --images : include images. Default True.
+# -m || --mongodb : use a mongodb database to store the data.
+# -p || --print : print to stdout.
+# -v || --videos : include videos. Default True.
+# -V || --verbose : verbose mode.
+
+par_count = False
+par_docx_filename = None
+par_help = False
+par_images = True
+par_mongodb = False
+par_print = False
+par_videos = True
+par_verbose = False
 
 def insertHR(paragraph):
     p = paragraph._p  # p is the <w:p> XML element
@@ -49,7 +70,8 @@ def insertHR(paragraph):
 def filtrar_directorios(nombreFichero):
     for directorio in to_remove:
         if directorio in nombreFichero:
-            print('FILTRADO!')
+            if args.verbose:
+                print('FILTERED: ' + nombreFichero)
             return True
     return False
 
@@ -106,62 +128,52 @@ def inserta_metadatos(doc, exif):
         run.font.size = Pt(8)
     return
 
-    paragraph = doc.add_paragraph('Metadatos: ', style='Normal')
-    for metadato in exif:
-        for c in metadato:
-            print(metadato + ': ' + exif[metadato] + '\n')
-
-
-    return
-
-
 def inserta_metadata_video(doc, fileName):
 
-    try:
-        with exiftool.ExifToolHelper() as et:
-            try:
-                json_output = et.execute_json('-L', fileName)
-            except Exception as e:
-                json_output = et.execute('-L', fileName)
-                # Eliminar los saltos de linea dobles
-                json_output = json_output.replace('\r\n', '\n')
-                paragraph = doc.add_paragraph()
-                paragraph.style = 'Normal'
-                paragraph.line_spacing = WD_LINE_SPACING.SINGLE
-                paragraph.space_after = Pt(0)
-                paragraph.space_before = Pt(0)
-                run = paragraph.add_run(str(json_output))
-                run.font.bold = False
-                run.font.size = Pt(8)
-                return
-                print(json_output)
+    with exiftool.ExifToolHelper() as et:
+        try:
+            json_output = et.execute('-L', fileName)
+        except Exception as e:
+            return
 
-        paragraph = doc.add_paragraph()
-        paragraph.style = 'Normal'
-        run = paragraph.add_run('Metadatos: ')
-        run.font.size = Pt(16)
-        run.font.bold = True
+    metadata_filtered = filter_pyexif_metadata(json_output)
+
+    table = doc.add_table(rows=0, cols=2)
+    table.style = 'Table Grid'
+
+    for exif_line in metadata_filtered:
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(exif_line[1])
+        row_cells[1].text = exif_line[2]    
+#        row_cells[1].font.bold = False
+    
+    return
+
+#    paragraph = doc.add_paragraph()
+#    paragraph.style = 'Normal'
+#    paragraph.line_spacing = WD_LINE_SPACING.SINGLE
+#    paragraph.space_after = Pt(0)
+#    paragraph.space_before = Pt(0)
+#
+#    for exif_line in metadata_filtered:
+#        run = paragraph.add_run(str(exif_line[1]))
+#        run.font.bold = True
+#        run.font.size = Pt(8)
+#        run = paragraph.add_run(": " + exif_line[2] + '\n')
+#        run.font.bold = False
+#        run.font.size = Pt(8)  
+#    return
 
 
-        paragraph = doc.add_paragraph()
-        paragraph.space_after = Pt(0)
-        paragraph.space_before = Pt(0)
 
-        for k,v in json_output[0].items():
-            run = paragraph.add_run(str(k))
-            run.font.bold = True
-            run.font.size = Pt(8)
-            run = paragraph.add_run(": " + str(v) + '\n')
-            run.font.bold = False
-            run.font.size = Pt(8)
-            
-        return
+def filter_pyexif_metadata(json_exif_data):
+    # First, we remove the extra line
+    json_exif_data = json_exif_data.replace('\r\n', '\n')
 
-    except Exception as e:
-        print("ERROR metadatos video: ")
-        print(e)
+    lines = json_exif_data.split('\n')
+    exif_data = [(line[:15].strip(), line[15:47].strip(), line[49:].strip()) for line in lines]
 
-        return
+    return exif_data
 
 
 # Comprobar si es una imagen por la extensión
@@ -197,7 +209,8 @@ def frames_de_video(filename):
         fichero_destino = f'{TMP_PATH}{path.stem}_result.jpg'
         fichero_destino = f'{TMP_PATH}{path.stem}_frame'+str(count)+'.jpg'
         cv2.imwrite(fichero_destino, image)
-        print('FICHERO_DESTINO: ' + fichero_destino)
+        if args.verbose:
+            print('TEMP FILE: ' + fichero_destino)
         imagenes.append(prepare_image(fichero_destino))
         count+=10*fps
     
@@ -206,73 +219,125 @@ def frames_de_video(filename):
 
 
 
+if __name__ == '__main__':
 
 
-# Creamos el documento
-doc = Document()
-doc.add_heading('Informe fotografías y videos', 0)
+    parser = argparse.ArgumentParser(
+        prog='generateImageAndVideoReport',
+        description='Process images and videos.',
+        epilog='Use -h or --help for help.')
 
-contador = 0
-imagenes_total = 0
-videos_total = 0
+    parser.add_argument('-c', '--count', action='store_true', help='Count images and videos.')
+    parser.add_argument('-i', '--images', action='store_true', help='Process images.')
+    parser.add_argument('-m', '--mongodb', action='store_true', help='Store metadata in MongoDB.')
+    parser.add_argument('-p', '--print', action='store_true', help='Print metadata.')
+    parser.add_argument('-v', '--videos', action='store_true', help='Process videos.')
+    parser.add_argument('-V', '--verbose', action='store_true', help='Verbose mode.')
+    parser.add_argument('-d', '--docx', help='Generate a docx file with the report.')
 
-for nombre_directorio, dirs, ficheros in os.walk('./'):
-    for fichero in ficheros:
-        nombreFichero = nombre_directorio.replace('\\', '/') + "/" + os.path.basename(fichero)
-        nombreFicheroOriginal = nombreFichero
-        contador += 1
-        print('[' + str(contador) + '] '+ nombreFicheroOriginal)
-        if contador % 1000 == 0:
-            doc.save('demo.docx')
-#        if contador > 250:
-#            doc.save('demo.docx')
-#            sys.exit()
+    args = parser.parse_args()
+    
+    par_count = args.count
+    par_docx_filename = args.docx
+    par_images = args.images
+    par_mongodb = args.mongodb
+    par_print = args.print
+    par_videos = args.videos
+    par_verbose = args.verbose
 
+    # We create the document if the option is selected
+    if args.docx:
+        doc = Document()
+        doc.add_heading('Informe fotografías y videos', 0)
 
-        if filtrar_directorios(nombreFicheroOriginal) == True:
-            continue
+    total_counter = 0
+    total_images = 0
+    total_videos = 0
 
+    for nombre_directorio, dirs, ficheros in os.walk('./'):
+        for fichero in ficheros:
+            nombreFichero = nombre_directorio.replace('\\', '/') + "/" + os.path.basename(fichero)
+            nombreFicheroOriginal = nombreFichero
 
-        if is_image(nombreFichero):
-
-#            continue
-            # Comprobamos si hay que convertir la imagen o no
-            nombreFichero = prepare_image(nombreFichero)
-
-
-            paragraph = doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
-            try:
-                doc.add_picture(nombreFichero, width=Inches(3.25))
-            except Exception as e:
-                print(e)
+            if filtrar_directorios(nombreFicheroOriginal) == True:
                 continue
-            try:
-                inserta_metadatos(doc, metadatos_imagen(nombreFicheroOriginal))
-            except Exception as e:
-                print(e)
-            imagenes_total += 1
 
-        elif is_video(nombreFichero):
-            doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
-            try: 
-                frames = frames_de_video(nombreFicheroOriginal)
-            except Exception as e:
-                print(e)
-            paragraph = doc.add_paragraph()
-            for frame in frames:
-                run = paragraph.add_run()
-                run.add_picture(frame, width=Inches(1.75))
+            total_counter += 1
 
-            inserta_metadata_video(doc, nombreFicheroOriginal)
-            videos_total += 1
+            if par_verbose:
+                print('[' + str(total_counter) + '] '+ nombreFicheroOriginal)
+            # We save the document every 1000 files processed
+            if total_counter % 1000 == 0:
+                if args.docx:
+                    doc.save(args.docx)
+    #        Just for testing and limiting the number of files processed
+    #        if total_counter > 250:
+    #            doc.save('demo.docx')
+    #            sys.exit()
 
-        paragraph = doc.add_paragraph()
-        insertHR(paragraph)
+
+
+
+            if is_image(nombreFichero):
+                if par_images == False:
+                    continue
+                if par_count:
+                    total_images += 1
+                    continue
+                # We check if the image is valid or not and we prepare it for the report
+                nombreFichero = prepare_image(nombreFichero)
+
+                if args.docx:
+                    paragraph = doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
+                try:
+                    doc.add_picture(nombreFichero, width=Inches(3.25))
+                except Exception as e:
+                    print(e)
+                    continue
+                try:
+                    if args.docx:
+                        inserta_metadatos(doc, metadatos_imagen(nombreFicheroOriginal))
+                except Exception as e:
+                    print(e)
+                total_images += 1
+
+            elif is_video(nombreFichero):
+                if par_videos == False:
+                    continue
+                if args.count:
+                    total_videos += 1
+                    continue
+                if args.docx:
+                    doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
+                try: 
+                    frames = frames_de_video(nombreFicheroOriginal)
+                except Exception as e:
+                    print(e)
+                if args.docx:
+                    paragraph = doc.add_paragraph()
+                    for frame in frames:
+                        run = paragraph.add_run()
+                        run.add_picture(frame, width=Inches(1.75))
+
+                if args.docx:
+                    inserta_metadata_video(doc, nombreFicheroOriginal)
+                total_videos += 1
+            if args.docx:
+                paragraph = doc.add_paragraph()
+                insertHR(paragraph)
+
+    if args.count:
+        print('Imágenes totales: ' + str(total_images))
+        print('Vídeos totales: ' + str(total_videos))
+        exit()
+
+    # We add the total number of images and videos at the end
+    if args.docx:
         paragraph = doc.add_paragraph()
         paragraph.add_run('Imágenes totales: ').font.bold = True
-        paragraph.add_run(str(imagenes_total) + '\n').font.bold = False
+        paragraph.add_run(str(total_images) + '\n').font.bold = False
         paragraph.add_run('Vídeos totales: ').font.bold = True
-        paragraph.add_run(str(videos_total) + '\n').font.bold = False
+        paragraph.add_run(str(total_videos) + '\n').font.bold = False
 
-
-doc.save('demo.docx')
+if args.docx:
+    doc.save(args.docx)
