@@ -1,15 +1,15 @@
-# Dependencias
+# Dependencies
 # pip install python-docx 
 # pip install pillow
 # pip install opencv-python
-# pip install ffmpeg-python
 # pip install pyexiftool
 
 import os
 import cv2
-# No funciona de forma correcta ffmpeg porque el wrapper no encuentra el ejecutable
-#import ffmpeg
 import exiftool
+
+# Check config_file_example for more info
+from config_file import TMP_PATH, to_remove
 
 from docx import Document
 from docx.shared import Inches
@@ -23,23 +23,6 @@ from PIL import ExifTags
 
 from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import qn
-
-
-# Path temporal para imagenes
-TMP_PATH = 'd:/tmp/images/'
-
-
-# Listado de directorios a filtrar
-to_remove = ['__VIDEOS/Video Dronecaptor/Postproduccion', \
-             '__VIDEOS/Video Dronecaptor/Imagenes recursos/dron 3D/', \
-             'Multipass_object', \
-             '__VIDEOS/Video Dronecaptor/Postproduccion/after effects', \
-             'Manifestación #RenunciaYa', \
-             '__VIDEOS/Video Recepcion Oficina/dibujos', \
-             'END!!!']
-
-
-
 
 def insertHR(paragraph):
     p = paragraph._p  # p is the <w:p> XML element
