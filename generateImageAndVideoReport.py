@@ -3,19 +3,22 @@
 # pip install pillow
 # pip install opencv-python
 # pip install pyexiftool
+# pip install uni-curses
 
 import os
 import cv2
 import exiftool
 import argparse
 
+
 # Check config_file_example for more info
 #from config_file import TMP_PATH, to_remove
 from config_file import *
+from tqdm import tqdm
+from time import sleep
 
 from docx import Document
-from docx.shared import Inches
-from docx.shared import Pt
+from docx.shared import Inches, Pt, Cm
 from docx.enum.text import WD_LINE_SPACING
 
 from pathlib import Path
@@ -140,11 +143,30 @@ def inserta_metadata_video(doc, fileName):
 
     table = doc.add_table(rows=0, cols=2)
     table.style = 'Table Grid'
+    table.autofit = True
+    table.columns[0].width = Cm(3)
+    table.columns[1].width = Cm(12)
 
     for exif_line in metadata_filtered:
         row_cells = table.add_row().cells
-        row_cells[0].text = str(exif_line[1])
-        row_cells[1].text = exif_line[2]    
+        paragraph = row_cells[0].add_paragraph()
+        paragraph.space_after = Pt(0)
+        paragraph.space_before = Pt(0)
+        dato = exif_line[1].replace('\n', '')
+        run = paragraph.add_run(dato)
+        run.font.bold = True
+        run.font.size = Pt(8)
+        run.font.name = 'Courier New'
+#        row_cells[0].text = str(exif_line[1])
+#        row_cells[1].text = exif_line[2]    
+        paragraph = row_cells[1].add_paragraph()
+        paragraph.space_after = Pt(0)
+        paragraph.space_before = Pt(0)
+        dato = exif_line[2].replace('\n', '')
+        run = paragraph.add_run(dato)
+        run.font.bold = False
+        run.font.size = Pt(8)
+        run.font.name = 'Courier New'
 #        row_cells[1].font.bold = False
     
     return
@@ -221,7 +243,6 @@ def frames_de_video(filename):
 
 if __name__ == '__main__':
 
-
     parser = argparse.ArgumentParser(
         prog='generateImageAndVideoReport',
         description='Process images and videos.',
@@ -254,15 +275,24 @@ if __name__ == '__main__':
     total_images = 0
     total_videos = 0
 
+    # Count files
+    if args.verbose == False:
+        pbar_max = 0
+        for nombre_directorio, dirs, ficheros in os.walk('./'):
+            for fichero in ficheros:
+                pbar_max += 1
+        # Progress bar
+        pbar = tqdm(total=pbar_max)
+
     for nombre_directorio, dirs, ficheros in os.walk('./'):
         for fichero in ficheros:
+            if args.verbose == False:
+                pbar.update(1)
             nombreFichero = nombre_directorio.replace('\\', '/') + "/" + os.path.basename(fichero)
             nombreFicheroOriginal = nombreFichero
 
             if filtrar_directorios(nombreFicheroOriginal) == True:
                 continue
-
-            total_counter += 1
 
             if par_verbose:
                 print('[' + str(total_counter) + '] '+ nombreFicheroOriginal)
@@ -271,12 +301,10 @@ if __name__ == '__main__':
                 if args.docx:
                     doc.save(args.docx)
     #        Just for testing and limiting the number of files processed
-    #        if total_counter > 250:
-    #            doc.save('demo.docx')
-    #            sys.exit()
-
-
-
+            if total_counter > 1:
+                if args.docx:
+                    doc.save(args.docx)
+                    exit(0)
 
             if is_image(nombreFichero):
                 if par_images == False:
@@ -284,6 +312,7 @@ if __name__ == '__main__':
                 if par_count:
                     total_images += 1
                     continue
+                total_counter += 1
                 # We check if the image is valid or not and we prepare it for the report
                 nombreFichero = prepare_image(nombreFichero)
 
@@ -300,6 +329,9 @@ if __name__ == '__main__':
                 except Exception as e:
                     print(e)
                 total_images += 1
+                if args.docx:
+                    paragraph = doc.add_paragraph()
+                    insertHR(paragraph)
 
             elif is_video(nombreFichero):
                 if par_videos == False:
@@ -307,6 +339,7 @@ if __name__ == '__main__':
                 if args.count:
                     total_videos += 1
                     continue
+                total_counter += 1
                 if args.docx:
                     doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
                 try: 
@@ -322,9 +355,12 @@ if __name__ == '__main__':
                 if args.docx:
                     inserta_metadata_video(doc, nombreFicheroOriginal)
                 total_videos += 1
-            if args.docx:
-                paragraph = doc.add_paragraph()
-                insertHR(paragraph)
+                if args.docx:
+                    paragraph = doc.add_paragraph()
+                    insertHR(paragraph)
+    
+    if args.verbose == False:
+        pbar.close()
 
     if args.count:
         print('Imágenes totales: ' + str(total_images))
