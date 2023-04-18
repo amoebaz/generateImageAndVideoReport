@@ -4,6 +4,7 @@
 # pip install opencv-python
 # pip install pyexiftool
 # pip install uni-curses
+# pip install pypongo
 
 import os
 import cv2
@@ -28,6 +29,9 @@ from PIL import ExifTags
 
 from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import qn
+
+# Own library for accessing the database with pymongo
+import mongodb
 
 # Global options
 # -c || --count : only count total count of images and videos and show on screen.
@@ -106,14 +110,17 @@ def metadatos_imagen(image_path):
     return exif
 
 
-def inserta_metadatos(doc, exif):
-
+def add_tittle(doc, text):
     paragraph = doc.add_paragraph()
     paragraph.style = 'Normal'
-    run = paragraph.add_run('Metadatos: ')
+    run = paragraph.add_run(text)
     run.font.size = Pt(16)
     run.font.bold = True
 
+
+def inserta_metadatos(doc, exif):
+
+    add_tittle(doc, 'Metadatos:')
 
     paragraph = doc.add_paragraph()
     paragraph.space_after = Pt(0)
@@ -133,6 +140,8 @@ def inserta_metadatos(doc, exif):
 
 def inserta_metadata_video(doc, fileName):
 
+    add_tittle(doc, 'Metadatos:')
+
     with exiftool.ExifToolHelper() as et:
         try:
             json_output = et.execute('-L', fileName)
@@ -144,29 +153,40 @@ def inserta_metadata_video(doc, fileName):
     table = doc.add_table(rows=0, cols=2)
     table.style = 'Table Grid'
     table.autofit = True
-    table.columns[0].width = Cm(3)
-    table.columns[1].width = Cm(12)
+    table.columns[0].width = Cm(5)
+    table.columns[1].width = Cm(10)
 
     for exif_line in metadata_filtered:
+        if par_mongodb:
+            mongodb.insert_data(collection, exif_line)
         row_cells = table.add_row().cells
-        paragraph = row_cells[0].add_paragraph()
-        paragraph.space_after = Pt(0)
-        paragraph.space_before = Pt(0)
-        dato = exif_line[1].replace('\n', '')
-        run = paragraph.add_run(dato)
-        run.font.bold = True
-        run.font.size = Pt(8)
-        run.font.name = 'Courier New'
+#        paragraph = doc.add_paragraph()
+#        paragraph.space_after = Pt(0)
+#        paragraph.space_before = Pt(0)
+        row_cells[0].paragraphs[0].text = exif_line[1]
+        row_cells[1].paragraphs[0].text = exif_line[2]
+        row_cells[0].paragraphs[0].runs[0].font.bold = True
+        row_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
+        row_cells[0].paragraphs[0].runs[0].font.name = 'Courier New'
+        row_cells[1].paragraphs[0].runs[0].font.bold = False
+        row_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
+        row_cells[1].paragraphs[0].runs[0].font.name = 'Courier New'
+#        run = row_cells[0].add_paragraph().add_run(exif_line[1])
+#        dato = exif_line[1].replace('\n', '')
+#        run = paragraph.add_run(dato)
+#        run.font.bold = True
+#        run.font.size = Pt(8)
+#        run.font.name = 'Courier New'
 #        row_cells[0].text = str(exif_line[1])
 #        row_cells[1].text = exif_line[2]    
-        paragraph = row_cells[1].add_paragraph()
-        paragraph.space_after = Pt(0)
-        paragraph.space_before = Pt(0)
-        dato = exif_line[2].replace('\n', '')
-        run = paragraph.add_run(dato)
-        run.font.bold = False
-        run.font.size = Pt(8)
-        run.font.name = 'Courier New'
+#        paragraph = row_cells[1].add_paragraph()
+#        paragraph.space_after = Pt(0)
+#        paragraph.space_before = Pt(0)
+#        dato = exif_line[2].replace('\n', '')
+#        run = paragraph.add_run(dato)
+#        run.font.bold = False
+#        run.font.size = Pt(8)
+#        run.font.name = 'Courier New'
 #        row_cells[1].font.bold = False
     
     return
@@ -266,27 +286,59 @@ if __name__ == '__main__':
     par_videos = args.videos
     par_verbose = args.verbose
 
+
+    # We connect to MongoDB
+    if par_mongodb:
+        collection = mongodb.connect_to_database()       
+        
+#        client = pymongo.MongoClient('mongodb://localhost:27017/')
+#        db = client['imagesAndVideos']
+#        collection = db['metadata']
+#        item_1 = {
+#        "_id" : "U1IT00001",
+#        "item_name" : "Blender",
+#        "max_discount" : "10%",
+#        "batch_number" : "RR450020FRG",
+#        "price" : 340,
+#        "category" : "kitchen appliance"
+#        }
+#
+#        item_2 = {
+#        "_id" : "U1IT00002",
+#        "item_name" : "Egg",
+#        "category" : "food",
+#        "quantity" : 12,
+#        "price" : 36,
+#        "item_description" : "brown country eggs"
+#        }
+#        collection.insert_many([item_1,item_2])
+#        exit(0)
+#        mongodb.insert_data(collection, item_1)
+
+
     # We create the document if the option is selected
-    if args.docx:
+    if par_docx_filename:
         doc = Document()
         doc.add_heading('Informe fotografías y videos', 0)
 
     total_counter = 0
     total_images = 0
     total_videos = 0
+    total_files = 0
 
     # Count files
-    if args.verbose == False:
-        pbar_max = 0
-        for nombre_directorio, dirs, ficheros in os.walk('./'):
-            for fichero in ficheros:
-                pbar_max += 1
-        # Progress bar
-        pbar = tqdm(total=pbar_max)
 
     for nombre_directorio, dirs, ficheros in os.walk('./'):
         for fichero in ficheros:
-            if args.verbose == False:
+            total_files += 1
+
+    if par_verbose == False:
+        # Progress bar
+        pbar = tqdm(total=total_files)
+
+    for nombre_directorio, dirs, ficheros in os.walk('./'):
+        for fichero in ficheros:
+            if par_verbose == False:
                 pbar.update(1)
             nombreFichero = nombre_directorio.replace('\\', '/') + "/" + os.path.basename(fichero)
             nombreFicheroOriginal = nombreFichero
@@ -295,28 +347,28 @@ if __name__ == '__main__':
                 continue
 
             if par_verbose:
-                print('[' + str(total_counter) + '] '+ nombreFicheroOriginal)
+                print('[ ' + str(total_counter) + ' / ' + str(total_files) + ' ] '+ nombreFicheroOriginal)
             # We save the document every 1000 files processed
             if total_counter % 1000 == 0:
-                if args.docx:
-                    doc.save(args.docx)
+                if par_docx_filename:
+                    doc.save(par_docx_filename)
     #        Just for testing and limiting the number of files processed
-            if total_counter > 1:
-                if args.docx:
-                    doc.save(args.docx)
+            if total_videos > 100 or total_images > 100:
+                if par_docx_filename:
+                    doc.save(par_docx_filename)
                     exit(0)
-
+            total_counter += 1
+            
             if is_image(nombreFichero):
                 if par_images == False:
                     continue
-                if par_count:
-                    total_images += 1
-                    continue
-                total_counter += 1
+                
+                total_images += 1
+
                 # We check if the image is valid or not and we prepare it for the report
                 nombreFichero = prepare_image(nombreFichero)
 
-                if args.docx:
+                if par_docx_filename:
                     paragraph = doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
                 try:
                     doc.add_picture(nombreFichero, width=Inches(3.25))
@@ -324,38 +376,35 @@ if __name__ == '__main__':
                     print(e)
                     continue
                 try:
-                    if args.docx:
-                        inserta_metadatos(doc, metadatos_imagen(nombreFicheroOriginal))
+                    if par_docx_filename:
+#                        inserta_metadatos(doc, metadatos_imagen(nombreFicheroOriginal))
+                        inserta_metadata_video(doc, nombreFicheroOriginal)
                 except Exception as e:
                     print(e)
-                total_images += 1
-                if args.docx:
+
+                if par_docx_filename:
                     paragraph = doc.add_paragraph()
                     insertHR(paragraph)
 
             elif is_video(nombreFichero):
                 if par_videos == False:
                     continue
-                if args.count:
-                    total_videos += 1
-                    continue
-                total_counter += 1
-                if args.docx:
+                total_videos += 1
+                if par_docx_filename:
                     doc.add_paragraph(nombreFicheroOriginal, style='Heading 2')
                 try: 
                     frames = frames_de_video(nombreFicheroOriginal)
                 except Exception as e:
                     print(e)
-                if args.docx:
+                if par_docx_filename:
                     paragraph = doc.add_paragraph()
                     for frame in frames:
                         run = paragraph.add_run()
                         run.add_picture(frame, width=Inches(1.75))
 
-                if args.docx:
+                if par_docx_filename:
                     inserta_metadata_video(doc, nombreFicheroOriginal)
-                total_videos += 1
-                if args.docx:
+                if par_docx_filename:
                     paragraph = doc.add_paragraph()
                     insertHR(paragraph)
     
@@ -365,15 +414,14 @@ if __name__ == '__main__':
     if args.count:
         print('Imágenes totales: ' + str(total_images))
         print('Vídeos totales: ' + str(total_videos))
-        exit()
 
     # We add the total number of images and videos at the end
-    if args.docx:
+    if par_docx_filename:
         paragraph = doc.add_paragraph()
         paragraph.add_run('Imágenes totales: ').font.bold = True
         paragraph.add_run(str(total_images) + '\n').font.bold = False
         paragraph.add_run('Vídeos totales: ').font.bold = True
         paragraph.add_run(str(total_videos) + '\n').font.bold = False
 
-if args.docx:
+if par_docx_filename:
     doc.save(args.docx)
