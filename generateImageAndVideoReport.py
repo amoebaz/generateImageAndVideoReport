@@ -24,6 +24,8 @@ from docx.enum.text import WD_LINE_SPACING
 
 from pathlib import Path
 
+from urllib.parse import urlparse
+
 from PIL import Image
 from PIL import ExifTags
 
@@ -32,6 +34,11 @@ from docx.oxml.ns import qn
 
 # Own library for accessing the database with pymongo
 import mongodb
+
+my_mongodb = None
+project_name = None
+mongodb_url = None
+pid = None
 
 # Global options
 # -c || --count : only count total count of images and videos and show on screen.
@@ -138,6 +145,20 @@ def inserta_metadatos(doc, exif):
         run.font.size = Pt(8)
     return
 
+# Comprobar si es una imagen por la extensión
+def is_image(filename):
+    extension = Path(filename).suffix
+    if extension.lower() in ['.jpg', '.png', '.jfif', '.exif', '.gif', '.tiff', '.bmp']:
+        return True
+    return False
+
+# Comprobar si es un video por la extensión
+def is_video(filename):
+    extension = Path(filename).suffix
+    if extension.lower() in ['.mp4', '.avi', '.mov', '.mpg', '.mpeg', '.wmv']:
+        return True
+    return False
+
 def inserta_metadata_video(doc, fileName):
 
     add_tittle(doc, 'Metadatos:')
@@ -156,9 +177,19 @@ def inserta_metadata_video(doc, fileName):
     table.columns[0].width = Cm(5)
     table.columns[1].width = Cm(10)
 
+    fid = None
+    type = "None"
+    if is_image(fileName):
+        type = "Image"
+    elif is_video(fileName):
+        type = "Video"
+        
+    if par_mongodb:
+        fid = my_mongodb.insert_file(pid, fileName, type)
+
     for exif_line in metadata_filtered:
-        if par_mongodb:
-            mongodb.insert_data(collection, exif_line)
+        if par_mongodb and fid != None:
+            my_mongodb.insert_metadata(fid, exif_line)
         row_cells = table.add_row().cells
 #        paragraph = doc.add_paragraph()
 #        paragraph.space_after = Pt(0)
@@ -218,20 +249,6 @@ def filter_pyexif_metadata(json_exif_data):
     return exif_data
 
 
-# Comprobar si es una imagen por la extensión
-def is_image(filename):
-    extension = Path(filename).suffix
-    if extension.lower() in ['.jpg', '.png', '.jfif', '.exif', '.gif', '.tiff', '.bmp']:
-        return True
-    return False
-
-# Comprobar si es un video por la extensión
-def is_video(filename):
-    extension = Path(filename).suffix
-    if extension.lower() in ['.mp4', '.avi', '.mov', '.mpg', '.mpeg', '.wmv']:
-        return True
-    return False
-
 def frames_de_video(filename):
     vidcap = cv2.VideoCapture(filename)
     count = 0
@@ -258,7 +275,11 @@ def frames_de_video(filename):
     
     return imagenes
 
-
+def my_url(arg):
+    url = urlparse(arg)
+    if all((url.scheme, url.netloc)):  # possibly other sections?
+        return arg  # return url in case you need the parsed object
+    raise argparse.ArgumentTypeError('Invalid URL')
 
 
 if __name__ == '__main__':
@@ -271,7 +292,9 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--count', action='store_true', help='Count images and videos.')
     parser.add_argument('-i', '--images', action='store_true', help='Process images.')
     parser.add_argument('-m', '--mongodb', action='store_true', help='Store metadata in MongoDB.')
-    parser.add_argument('-p', '--print', action='store_true', help='Print metadata.')
+    parser.add_argument('-u', '--url', type=my_url, help='MongoDB URL.')
+    parser.add_argument('-p', '--project', help='Default project name for MongoDB schema')
+    parser.add_argument('-P', '--print', action='store_true', help='Print metadata.')
     parser.add_argument('-v', '--videos', action='store_true', help='Process videos.')
     parser.add_argument('-V', '--verbose', action='store_true', help='Verbose mode.')
     parser.add_argument('-d', '--docx', help='Generate a docx file with the report.')
@@ -282,40 +305,26 @@ if __name__ == '__main__':
     par_docx_filename = args.docx
     par_images = args.images
     par_mongodb = args.mongodb
+    par_url = args.url
+    par_project = args.project
     par_print = args.print
     par_videos = args.videos
     par_verbose = args.verbose
 
-
-    # We connect to MongoDB
     if par_mongodb:
-        collection = mongodb.connect_to_database()       
+        # We connect to MongoDB
+        my_mongodb = mongodb.MongoDB(MONGO_DB_NAME)
+
+        if par_project == None:
+            par_project = MONGO_DB_DEFAULT_PROJECT
+
+        my_mongodb.connect_to_database()
         
-#        client = pymongo.MongoClient('mongodb://localhost:27017/')
-#        db = client['imagesAndVideos']
-#        collection = db['metadata']
-#        item_1 = {
-#        "_id" : "U1IT00001",
-#        "item_name" : "Blender",
-#        "max_discount" : "10%",
-#        "batch_number" : "RR450020FRG",
-#        "price" : 340,
-#        "category" : "kitchen appliance"
-#        }
-#
-#        item_2 = {
-#        "_id" : "U1IT00002",
-#        "item_name" : "Egg",
-#        "category" : "food",
-#        "quantity" : 12,
-#        "price" : 36,
-#        "item_description" : "brown country eggs"
-#        }
-#        collection.insert_many([item_1,item_2])
-#        exit(0)
-#        mongodb.insert_data(collection, item_1)
+        # We create the project if it does not exist
+        pid = my_mongodb.insert_project(par_project)
 
 
+        
     # We create the document if the option is selected
     if par_docx_filename:
         doc = Document()
@@ -377,7 +386,6 @@ if __name__ == '__main__':
                     continue
                 try:
                     if par_docx_filename:
-#                        inserta_metadatos(doc, metadatos_imagen(nombreFicheroOriginal))
                         inserta_metadata_video(doc, nombreFicheroOriginal)
                 except Exception as e:
                     print(e)
